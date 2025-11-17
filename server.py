@@ -214,12 +214,39 @@ def git_pull_request(
     except Exception as e:
         return f"Error: {e}"
 
+def automated_tests(iterations: int = 3) -> str:
+    """Automated testing and code improvement"""
+    log = []
+    for i in range(iterations):
+        log.append(f"--- Iteration {i+1} ---")
 
+        # run tests
+        run_output = run_tests()
+        log.append("Test run output:\n" + run_output)
 
+        # analyze coverage
+        coverage_file = "target/site/jacoco/jacoco.xml"
+        uncovered = coverage_analysis(coverage_file)
+        log.append("Coverage analysis:\n" + uncovered)
+
+        if uncovered.strip() == "All covered":
+            log.append("All code covered. Stopping.")
+            break
+
+        # generate tests
+        for method in uncovered.splitlines():
+            generate_tests("src/main/java/")
+            log.append(f"Generated tests for method: {method}")
+
+        # stage, commit, and push changes
+        git_add_all()
+        git_commit(f"Automated tests iteration {i+1}")
+        git_push()
+        log.append(f"Pushed changes to remote.")
+    return "\n".join(log)
 
 if __name__ == "__main__":
     mcp.run(transport="sse")
-
 
 # source .venv/bin/activate
 # python server.py
