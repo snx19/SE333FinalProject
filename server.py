@@ -2,6 +2,7 @@
 from fastmcp import FastMCP
 import re
 import subprocess
+import os
 
 import xml.etree.ElementTree as ET
 
@@ -15,23 +16,46 @@ def add(a: int, b: int) -> int:
 @mcp.tool
 def generate_tests(java_file_path: str) -> str:
     """Generate JUnit tests based on signature methods"""
+
+    if not os.path.exists(java_file_path):
+        return "Error: file not found."
+
     try:
         code = open(java_file_path, 'r').read()
-    except:
-        return "Error: file not found."
+    except Exception as e:
+        return f"Error: file {e}"
     
     # finds method names
-    methods = re.findall(r'public\s+\w+\s+(\w+)\s*\(', code)
+    methods = re.findall(
+        r'public\s+(?:static\s+)?[\w<>\[\]]+\s+(\w+)\s*\(', code)
+    
+    if not methods:
+        return f"No public methods found in {java_file_path}."
 
     # JUnit test class
-    test_code = "import org.junit.Test;\npublic class GeneratedTests {\n"
+    classname = os.path.splitext(os.path.basename(java_file_path))[0]
+    test_class_name = f"{classname}Test"
+
+    test_code = "import org.junit.Test;\nimport static org.junit.Assert.*;\n\n"
+    test_code += f"public class {test_class_name} {{\n"
+
     for m in methods:
-        test_code += f"\n @Test public void test{m}() {{}}\n"
+        if m == classname:
+            continue  # skip constructor
+        test_code += f"    @Test\n public void test{m}() {{\n"
+        test_code += f"        // TODO: implement test for {m}\n"
+        test_code += f"    }}\n\n"
+
     test_code += "}\n"
 
     # output
-    with open("GeneratedTests.java", "w") as f:
-        f.write(test_code)
+    output_path = os.path.join(os.path.dirname(java_file_path), f"{test_class_name}.java")
+    try:
+        with open(output_path, "w") as f:
+            f.write(test_code)
+    except Exception as e:
+        return f"Error writing test file: {e}"
+    
     return f"Generated {len(methods)} tests in GeneratedTests.java"
 
 @mcp.tool
@@ -220,30 +244,83 @@ def automated_tests(iterations: int = 3) -> str:
     for i in range(iterations):
         log.append(f"--- Iteration {i+1} ---")
 
-        # run tests
+        # 1. run tests
         run_output = run_tests()
         log.append("Test run output:\n" + run_output)
 
-        # analyze coverage
+        # 2. analyze coverage
         coverage_file = "target/site/jacoco/jacoco.xml"
         uncovered = coverage_analysis(coverage_file)
         log.append("Coverage analysis:\n" + uncovered)
 
-        if uncovered.strip() == "All covered":
-            log.append("All code covered. Stopping.")
-            break
+        # 3. identify failing tests
+        failing_tests = [
+            line.split()[1]
+            for line in run_output.splitlines()
+            if "FAILURE!" in line or "Exception" in line
+        ]
 
-        # generate tests
+        # 4. fix bugs for failing tests
+        for failing_test in failing_tests:
+            # find file 
+            src_file = f"src/main/java/org/apache/commons/lang3/{failing_test.replace('Test', '')}.java"
+            if os.path.exists(src_file):
+                fix_result = fix_bug(src_file, failing_test)
+                log.append(fix_result)
+        
+        # 5. generate tests
         for method in uncovered.splitlines():
             generate_tests("src/main/java/")
             log.append(f"Generated tests for method: {method}")
 
-        # stage, commit, and push changes
+        # 6. stage, commit, and push changes
         git_add_all()
         git_commit(f"Automated tests iteration {i+1}")
         git_push()
         log.append(f"Pushed changes to remote.")
+
+        # 7. stops if covered
+        if uncovered.strip() == "All covered":
+            log.append("All code covered. Stopping.")
+            break
+
     return "\n".join(log)
+
+@mcp.tool
+def fix_bug(file_path: str, failing_test: str) -> str:
+    """Automatically try to fix a bug based on a failing test"""
+    
+    if not os.path.exists(file_path):
+        return f"Error: file not found: {file_path}"
+    
+    try:
+        original = open(file_path, 'r').read()
+    except Exception as e:
+        return f"Error reading file: {e}"
+    
+    prompt = f"""
+The following Java file has a bug that causes the test '{failing_test}' to fail.
+
+Failing test:
+{failing_test}
+
+File contents:
+------------------
+{original}
+------------------
+
+Fix the bug and return only the corrected java file contents.
+"""
+    # use model to write fixed code
+    fixed_code = mcp.run_model(prompt)
+    # fixed version
+    try:
+        with open(file_path, "w") as f:
+            f.write(fixed_code)
+    except Exception as e:
+        return f"Error writing fixed file: {e}"
+    return f"bug fixed in {file_path}"
+            
 
 if __name__ == "__main__":
     mcp.run(transport="sse")
