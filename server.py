@@ -262,11 +262,22 @@ def automated_tests(iterations: int = 3) -> str:
 
         # 4. fix bugs for failing tests
         for failing_test in failing_tests:
-            # find file 
-            src_file = f"src/main/java/org/apache/commons/lang3/{failing_test.replace('Test', '')}.java"
-            if os.path.exists(src_file):
+            # map test class name to source file
+            class_name = failing_test.replace("Test", "")
+            # search in src/main/java
+            src_file = None
+            for root, dirs, files in os.walk("src/main/java/"):
+                for file in files:
+                    if file == f"{class_name}.java":
+                        src_file = os.path.join(root, file)
+                        break
+                if src_file:
+                    break
+            if src_file:
                 fix_result = fix_bug(src_file, failing_test)
                 log.append(fix_result)
+            else:
+                log.append(f"Could not find source file for failing test: {failing_test}")
         
         # 5. generate tests
         for method in uncovered.splitlines():
